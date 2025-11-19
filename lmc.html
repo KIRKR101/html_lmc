@@ -1,0 +1,641 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>LMC Simulator</title>
+    <style>
+        :root {
+            --bg-color: #1e1e1e;
+            --panel-bg: #252526;
+            --accent: #007acc;
+            --text-color: #d4d4d4;
+            --highlight: #dcdcaa;
+            --active-cell: #c586c0;
+            --border: #3e3e42;
+        }
+
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            background-color: var(--bg-color);
+            color: var(--text-color);
+            margin: 0;
+            height: 100vh;
+            display: flex;
+            flex-direction: column;
+            overflow: hidden;
+        }
+
+        header {
+            background-color: var(--panel-bg);
+            padding: 10px 20px;
+            border-bottom: 1px solid var(--border);
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+
+        h1 { margin: 0; font-size: 1.2rem; }
+
+        .main-container {
+            display: grid;
+            grid-template-columns: 300px 5px 1fr 350px;
+            flex: 1;
+            height: calc(100vh - 50px);
+        }
+
+        /* Editor Section */
+        .editor-panel {
+            display: flex;
+            flex-direction: column;
+            background-color: var(--panel-bg);
+        }
+
+        .resizer {
+            width: 5px;
+            background-color: var(--border);
+            cursor: ew-resize;
+            z-index: 1;
+        }
+
+        .editor-toolbar {
+            padding: 10px;
+            display: flex;
+            gap: 5px;
+            background: #333;
+        }
+
+        button {
+            background: var(--accent);
+            color: white;
+            border: none;
+            padding: 5px 10px;
+            cursor: pointer;
+            font-size: 0.9rem;
+            border-radius: 3px;
+        }
+
+        button:hover { opacity: 0.9; }
+        button:disabled { background: #555; cursor: not-allowed; }
+        button.secondary { background: #555; }
+
+        textarea {
+            flex: 1;
+            background-color: var(--bg-color);
+            color: #9cdcfe;
+            border: none;
+            resize: none;
+            padding: 10px;
+            font-family: 'Courier New', Courier, monospace;
+            font-size: 14px;
+            outline: none;
+        }
+
+        /* CPU & Output Section */
+        .cpu-panel {
+            padding: 20px;
+            display: flex;
+            flex-direction: column;
+            gap: 20px;
+            overflow-y: auto;
+        }
+
+        .registers {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(120px, 1fr));
+            gap: 15px;
+        }
+
+        .register-box {
+            background: var(--panel-bg);
+            border: 1px solid var(--border);
+            padding: 10px;
+            border-radius: 5px;
+            text-align: center;
+        }
+
+        .reg-label { font-size: 0.8rem; color: #aaa; margin-bottom: 5px; }
+        .reg-value { font-size: 1.5rem; font-family: monospace; color: var(--highlight); }
+
+        .io-console {
+            flex: 1;
+            background: black;
+            border: 1px solid var(--border);
+            padding: 10px;
+            font-family: monospace;
+            color: #4caf50;
+            overflow-y: auto;
+            display: flex;
+            flex-direction: column;
+        }
+
+        .log-entry { margin-bottom: 2px; }
+        .log-entry.input { color: #ce9178; }
+        .log-entry.error { color: #f48771; }
+
+        /* Memory Grid Section */
+        .memory-panel {
+            border-left: 1px solid var(--border);
+            background-color: var(--panel-bg);
+            display: flex;
+            flex-direction: column;
+        }
+
+        .memory-header {
+            padding: 10px;
+            text-align: center;
+            font-weight: bold;
+            background: #333;
+        }
+
+        .memory-grid {
+            display: grid;
+            grid-template-columns: repeat(10, 1fr);
+            gap: 2px;
+            padding: 10px;
+            overflow-y: auto;
+        }
+
+        .cell {
+            background: var(--bg-color);
+            aspect-ratio: 1;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            font-size: 0.8rem;
+            cursor: default;
+            border: 1px solid transparent;
+        }
+
+        .cell.active { background-color: var(--active-cell); color: white; }
+        .cell.read { border-color: #4caf50; }
+        .cell.write { border-color: #f44336; }
+
+        .cell-addr { font-size: 0.6rem; color: #666; }
+        .cell-val { font-family: monospace; font-weight: bold; }
+        .cell.active .cell-addr { color: #ddd; }
+
+        .status-bar {
+            padding: 5px 10px;
+            background: var(--accent);
+            color: white;
+            font-size: 0.8rem;
+            display: flex;
+            justify-content: space-between;
+        }
+
+        /* Speed Slider */
+        .speed-control {
+            display: flex;
+            align-items: center;
+            gap: 5px;
+            color: #aaa;
+            font-size: 0.8rem;
+        }
+
+        #speedDisplay {
+            display: inline-block;
+            min-width: 3ch;
+            text-align: right;
+        }
+    </style>
+</head>
+<body>
+
+<header>
+    <h1>LMC Simulator</h1>
+    <div class="speed-control">
+        <span>Speed:</span>
+        <input type="range" id="speedSlider" min="1" max="100" value="50">
+        <span id="speedDisplay">50</span> instructions/sec
+    </div>
+</header>
+
+<div class="main-container">
+    <!-- Editor -->
+    <div class="editor-panel">
+        <div class="editor-toolbar">
+            <button onclick="assembleAndLoad()">Assemble & Load</button>
+            <button class="secondary" onclick="resetCPU()">Reset</button>
+        </div>
+        <textarea id="codeEditor" spellcheck="false">
+// Count down from Input
+        INP
+        STA 99
+LOOP    LDA 99
+        OUT
+        SUB ONE
+        STA 99
+        BRP LOOP
+        HLT
+ONE     DAT 1</textarea>
+    </div>
+
+    <div class="resizer" id="editorResizer"></div>
+
+    <!-- CPU View -->
+    <div class="cpu-panel">
+        <div class="registers">
+            <div class="register-box">
+                <div class="reg-label">Accumulator</div>
+                <div class="reg-value" id="regAcc">000</div>
+            </div>
+            <div class="register-box">
+                <div class="reg-label">Program Counter</div>
+                <div class="reg-value" id="regPC">00</div>
+            </div>
+            <div class="register-box">
+                <div class="reg-label">Instruction Reg</div>
+                <div class="reg-value" id="regIR">000</div>
+            </div>
+            <div class="register-box">
+                <div class="reg-label">Status</div>
+                <div class="reg-value" id="statusDisplay" style="font-size: 1rem;">STOPPED</div>
+            </div>
+        </div>
+
+        <div class="editor-toolbar" style="background: transparent; padding-left: 0;">
+            <button onclick="runCPU()" id="btnRun">Run</button>
+            <button onclick="stepCPU()" id="btnStep" class="secondary">Step</button>
+            <button onclick="stopCPU()" id="btnStop" class="secondary" disabled>Stop</button>
+        </div>
+
+        <div class="io-console" id="consoleOutput">
+            <div class="log-entry">System Ready.</div>
+        </div>
+    </div>
+
+    <!-- Memory View -->
+    <div class="memory-panel">
+        <div class="memory-header">Memory (Mailboxes)</div>
+        <div class="memory-grid" id="memoryGrid">
+            <!-- Generated by JS -->
+        </div>
+    </div>
+</div>
+
+<div class="status-bar">
+    <span id="statusMsg">Ready to assemble.</span>
+</div>
+
+<script>
+    // --- State ---
+    const MEM_SIZE = 100;
+    let memory = new Array(MEM_SIZE).fill(0);
+    let accumulator = 0;
+    let programCounter = 0;
+    let instructionRegister = 0;
+    let isRunning = false;
+    let runInterval = null;
+    
+    // --- DOM Elements ---
+    const speedSlider = document.getElementById('speedSlider');
+    const speedDisplayEl = document.getElementById('speedDisplay');
+    const gridEl = document.getElementById('memoryGrid');
+    const consoleEl = document.getElementById('consoleOutput');
+    const regAccEl = document.getElementById('regAcc');
+    const regPCEl = document.getElementById('regPC');
+    const regIREl = document.getElementById('regIR');
+    const statusDisplayEl = document.getElementById('statusDisplay');
+    const statusMsgEl = document.getElementById('statusMsg');
+    const btnRun = document.getElementById('btnRun');
+    const btnStep = document.getElementById('btnStep');
+    const btnStop = document.getElementById('btnStop');
+
+    const mainContainer = document.querySelector('.main-container');
+    const editorResizer = document.getElementById('editorResizer');
+    const editorPanel = document.querySelector('.editor-panel');
+
+    let isResizing = false;
+    let initialMouseX;
+    let initialEditorWidth;
+
+    // --- Initialization ---
+    function initGrid() {
+        gridEl.innerHTML = '';
+        for (let i = 0; i < MEM_SIZE; i++) {
+            const cell = document.createElement('div');
+            cell.className = 'cell';
+            cell.id = `cell-${i}`;
+            cell.innerHTML = `
+                <span class="cell-val">000</span>
+                <span class="cell-addr">${pad(i, 2)}</span>
+            `;
+            gridEl.appendChild(cell);
+        }
+    }
+    initGrid();
+
+    // --- Helpers ---
+    function pad(num, size) {
+        let s = "000" + num;
+        return s.substr(s.length - size);
+    }
+
+    function log(msg, type = '') {
+        const div = document.createElement('div');
+        div.className = `log-entry ${type}`;
+        div.textContent = `> ${msg}`;
+        consoleEl.appendChild(div);
+        consoleEl.scrollTop = consoleEl.scrollHeight;
+    }
+
+    function updateUI(activeAddr = -1, read = false, write = false) {
+        regAccEl.textContent = pad(accumulator, 3);
+        regPCEl.textContent = pad(programCounter, 2);
+        regIREl.textContent = pad(instructionRegister, 3);
+
+        // Reset grid styles
+        document.querySelectorAll('.cell').forEach(c => {
+            c.classList.remove('active', 'read', 'write');
+            // Update values
+            const id = parseInt(c.id.split('-')[1]);
+            c.querySelector('.cell-val').textContent = pad(memory[id], 3);
+        });
+
+        // Highlight current PC
+        const pcCell = document.getElementById(`cell-${programCounter}`);
+        if (pcCell) pcCell.classList.add('active');
+
+        // Highlight Memory Access if any
+        if (activeAddr >= 0 && activeAddr < 100) {
+            const target = document.getElementById(`cell-${activeAddr}`);
+            if (target) {
+                if (read) target.classList.add('read');
+                if (write) target.classList.add('write');
+            }
+        }
+    }
+
+    // --- Assembler ---
+    function assembleAndLoad() {
+        stopCPU();
+        const code = document.getElementById('codeEditor').value;
+        const lines = code.split('\n');
+        const labels = {};
+        let address = 0;
+        
+        // 0. Clear Memory
+        memory.fill(0);
+        accumulator = 0;
+        programCounter = 0;
+        instructionRegister = 0;
+
+        // 1. First Pass: Map Labels
+        let tempAddr = 0;
+        const cleanLines = [];
+
+        for (let line of lines) {
+            // Remove comments and trim
+            let clean = line.split('//')[0].split(';')[0].trim().toUpperCase();
+            if (!clean) continue;
+
+            const parts = clean.split(/\s+/);
+            
+            // Check if first part is a label (not a mnemonic)
+            const mnemonics = ['ADD', 'SUB', 'STA', 'LDA', 'BRA', 'BRZ', 'BRP', 'INP', 'OUT', 'HLT', 'DAT'];
+            
+            let label = null;
+            let opcodeStr = null;
+            let operandStr = null;
+
+            if (mnemonics.includes(parts[0])) {
+                opcodeStr = parts[0];
+                operandStr = parts[1];
+            } else {
+                label = parts[0];
+                opcodeStr = parts[1];
+                operandStr = parts[2];
+            }
+
+            if (label) {
+                labels[label] = tempAddr;
+            }
+            
+            cleanLines.push({ address: tempAddr, op: opcodeStr, param: operandStr });
+            tempAddr++;
+            if(tempAddr > 99) {
+                log("Error: Program too large for memory", "error");
+                return;
+            }
+        }
+
+        // 2. Second Pass: Generate Code
+        try {
+            for (let line of cleanLines) {
+                let val = 0;
+                let p = line.param;
+                let numericParam = 0;
+
+                // Resolve Label to Address
+                if (p) {
+                    if (labels.hasOwnProperty(p)) {
+                        numericParam = labels[p];
+                    } else if (!isNaN(parseInt(p))) {
+                        numericParam = parseInt(p);
+                    } else {
+                        throw new Error(`Undefined label: ${p}`);
+                    }
+                }
+
+                switch (line.op) {
+                    case 'ADD': val = 100 + numericParam; break;
+                    case 'SUB': val = 200 + numericParam; break;
+                    case 'STA': val = 300 + numericParam; break;
+                    case 'LDA': val = 500 + numericParam; break;
+                    case 'BRA': val = 600 + numericParam; break;
+                    case 'BRZ': val = 700 + numericParam; break;
+                    case 'BRP': val = 800 + numericParam; break;
+                    case 'INP': val = 901; break;
+                    case 'OUT': val = 902; break;
+                    case 'HLT': val = 0; break;
+                    case 'DAT': val = numericParam; break;
+                    default: 
+                        if(line.op === undefined && line.param === undefined) break; // Label only line?
+                        throw new Error(`Unknown instruction: ${line.op}`);
+                }
+
+                memory[line.address] = val % 1000;
+            }
+            
+            log("Assembly successful. Memory loaded.");
+            statusMsgEl.textContent = "Program Loaded.";
+            updateUI();
+        } catch (e) {
+            log(e.message, "error");
+            statusMsgEl.textContent = "Assembly Error.";
+        }
+    }
+
+    // --- CPU Logic ---
+    function stepCPU() {
+        if (programCounter >= 100) {
+            log("PC out of bounds. Halting.", "error");
+            stopCPU();
+            return;
+        }
+
+        // FETCH
+        const instruction = memory[programCounter];
+        instructionRegister = instruction;
+        const opcode = Math.floor(instruction / 100);
+        const operand = instruction % 100;
+        
+        let nextPC = programCounter + 1;
+        let activeMem = -1;
+        let isRead = false;
+        let isWrite = false;
+
+        // EXECUTE
+        switch (opcode) {
+            case 1: // ADD
+                accumulator += memory[operand];
+                if (accumulator > 999) { 
+                    accumulator = accumulator % 1000; // Wrap
+                    // Standard LMC usually flags overflow, but simple ver wraps
+                }
+                activeMem = operand; isRead = true;
+                break;
+            case 2: // SUB
+                accumulator -= memory[operand];
+                // Handle negative numbers (LMC specific: usually wraps or flags)
+                // Here we will allow negative for internal logic but wrap/clamp for display if needed
+                // Standard LMC: results are 0-999. Subtraction resulting in negative
+                // sets a flag, but data stores as (1000 + val) or similar.
+                // Simplest simulation: Keep standard JS math, but handle BRP correctly.
+                activeMem = operand; isRead = true;
+                break;
+            case 3: // STA
+                memory[operand] = accumulator < 0 ? (1000 + accumulator) % 1000 : accumulator % 1000;
+                activeMem = operand; isWrite = true;
+                break;
+            case 5: // LDA
+                accumulator = memory[operand];
+                activeMem = operand; isRead = true;
+                break;
+            case 6: // BRA
+                nextPC = operand;
+                break;
+            case 7: // BRZ
+                if (accumulator === 0) nextPC = operand;
+                break;
+            case 8: // BRP
+                if (accumulator >= 0) nextPC = operand;
+                break;
+            case 9: // IO
+                if (instruction === 901) { // INP
+                    let input = prompt("Enter input (0-999):");
+                    if (input === null) {
+                        stopCPU();
+                        log("Input cancelled. Stopped.");
+                        return;
+                    }
+                    let val = parseInt(input);
+                    if (isNaN(val)) val = 0;
+                    accumulator = val;
+                    log(`Input: ${val}`, "input");
+                } else if (instruction === 902) { // OUT
+                    log(`Output: ${accumulator}`, "input");
+                }
+                break;
+            case 0: // HLT
+                log("Program Halted.");
+                statusDisplayEl.textContent = "HALTED";
+                stopCPU();
+                updateUI(); // Final update
+                return; // Stop PC increment
+        }
+
+        // Handle Accumulator Wrapping for display (000-999) usually
+        // Note: Keeping accumulator distinct allows debugging negative math,
+        // but strictly LMC memory is 3 digits.
+        
+        programCounter = nextPC;
+        updateUI(activeMem, isRead, isWrite);
+    }
+
+    function runCPU() {
+        if (isRunning) return;
+        isRunning = true;
+        btnRun.disabled = true;
+        btnStep.disabled = true;
+        btnStop.disabled = false;
+        statusDisplayEl.textContent = "RUNNING";
+        
+        const getSpeed = () => {
+            return 1000 / speedSlider.value; // Delay in ms, higher speed value means lower delay
+        };
+
+        const loop = () => {
+            if (!isRunning) return;
+            stepCPU();
+            if (isRunning) {
+                runInterval = setTimeout(loop, getSpeed());
+            }
+        };
+        loop();
+    }
+
+    function stopCPU() {
+        isRunning = false;
+        clearTimeout(runInterval);
+        btnRun.disabled = false;
+        btnStep.disabled = false;
+        btnStop.disabled = true;
+        statusDisplayEl.textContent = "STOPPED";
+    }
+
+    function resetCPU() {
+        stopCPU();
+        programCounter = 0;
+        accumulator = 0;
+        instructionRegister = 0;
+        log("CPU Reset.");
+        updateUI();
+    }
+
+    // --- Speed Control ---
+    function updateSpeedDisplay() {
+        speedDisplayEl.textContent = speedSlider.value;
+    }
+
+    speedSlider.addEventListener('input', updateSpeedDisplay);
+
+    // Initial UI Update
+    updateUI();
+    updateSpeedDisplay(); // Set initial speed display
+
+    // --- Resizer Logic ---
+    editorResizer.addEventListener('mousedown', function(e) {
+        isResizing = true;
+        initialMouseX = e.clientX;
+        initialEditorWidth = editorPanel.offsetWidth;
+
+        document.addEventListener('mousemove', resizeEditor);
+        document.addEventListener('mouseup', stopResizing);
+    });
+
+    function resizeEditor(e) {
+        if (!isResizing) return;
+        const deltaX = e.clientX - initialMouseX;
+        let newWidth = initialEditorWidth + deltaX;
+
+        // Clamp width to reasonable bounds
+        const minWidth = 100;
+        const maxWidth = mainContainer.offsetWidth - 400; // Keep CPU and Memory panels visible
+        if (newWidth < minWidth) newWidth = minWidth;
+        if (newWidth > maxWidth) newWidth = maxWidth;
+
+        mainContainer.style.gridTemplateColumns = `${newWidth}px 5px 1fr 350px`;
+    }
+
+    function stopResizing() {
+        isResizing = false;
+        document.removeEventListener('mousemove', resizeEditor);
+        document.removeEventListener('mouseup', stopResizing);
+    }
+
+</script>
+</body>
+</html>
